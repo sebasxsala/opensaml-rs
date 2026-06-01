@@ -31,6 +31,8 @@ pub struct EntitySetting {
     pub authn_requests_signed: bool,
     /// SP: requires signed assertions.
     pub want_assertions_signed: bool,
+    /// SP: reject a `<Response>` whose `<Audience>` is not this entity (default `true`).
+    pub validate_audience: bool,
     /// SP: requires signed messages.
     pub want_message_signed: bool,
     /// IdP: requires signed AuthnRequests.
@@ -126,6 +128,7 @@ impl Default for EntitySetting {
             relay_state: String::new(),
             authn_requests_signed: false,
             want_assertions_signed: false,
+            validate_audience: true,
             want_message_signed: false,
             want_authn_requests_signed: false,
             want_logout_request_signed: false,

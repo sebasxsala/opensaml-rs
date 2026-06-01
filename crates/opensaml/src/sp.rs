@@ -230,11 +230,36 @@ impl ServiceProvider {
     }
 
     /// Parse and validate an IdP login `<Response>` (signature required, samlify parity).
+    ///
+    /// When `setting.validate_audience` is set, the assertion's `<Audience>`
+    /// must include this SP's entity ID.
     pub fn parse_login_response(
         &self,
         idp: &IdentityProvider,
         binding: Binding,
         request: &HttpRequest,
+    ) -> Result<FlowResult, OpenSamlError> {
+        self.parse_login_response_inner(idp, binding, request, None)
+    }
+
+    /// Like [`Self::parse_login_response`] but also requires `InResponseTo` to
+    /// equal `request_id` (anti-replay: bind the response to a request you sent).
+    pub fn parse_login_response_with_request_id(
+        &self,
+        idp: &IdentityProvider,
+        binding: Binding,
+        request: &HttpRequest,
+        request_id: &str,
+    ) -> Result<FlowResult, OpenSamlError> {
+        self.parse_login_response_inner(idp, binding, request, Some(request_id))
+    }
+
+    fn parse_login_response_inner(
+        &self,
+        idp: &IdentityProvider,
+        binding: Binding,
+        request: &HttpRequest,
+        in_response_to: Option<&str>,
     ) -> Result<FlowResult, OpenSamlError> {
         let signing_certs = idp.metadata.x509_certificates(CertUse::Signing);
         let decrypt_key = if self.setting.is_assertion_encrypted {
@@ -242,6 +267,7 @@ impl ServiceProvider {
         } else {
             None
         };
+        let audience = self.entity_id();
         flow(
             &FlowOptions {
                 binding: Some(binding),
@@ -252,6 +278,8 @@ impl ServiceProvider {
                 decrypt_key,
                 decrypt_key_pass: self.setting.enc_private_key_pass.as_deref(),
                 clock_drifts: self.setting.clock_drifts,
+                expected_audience: self.setting.validate_audience.then_some(audience.as_str()),
+                expected_in_response_to: in_response_to,
             },
             request,
         )

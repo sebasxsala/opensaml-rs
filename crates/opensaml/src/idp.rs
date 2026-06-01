@@ -247,7 +247,7 @@ impl IdentityProvider {
         sp: &ServiceProvider,
         binding: Binding,
         raw: &str,
-        encrypt_then_sign: bool,
+        _encrypt_then_sign: bool,
     ) -> Result<String, OpenSamlError> {
         use crate::crypto::{construct_saml_signature, encrypt_assertion, keys::load_private_key};
 
@@ -283,7 +283,10 @@ impl IdentityProvider {
                 None,
             )?;
         }
-        if sign_message && !encrypt_then_sign {
+        // Sign-then-encrypt of a sub-element would invalidate an outer message
+        // signature, so when encrypting we always sign the message *after*
+        // encryption (sound encrypt-then-sign). Without encryption, sign here.
+        if sign_message && !self.setting.is_assertion_encrypted {
             xml = construct_saml_signature(
                 &xml,
                 true,
@@ -307,7 +310,7 @@ impl IdentityProvider {
                 &self.setting.tag_prefix_encrypted_assertion,
             )?;
         }
-        if sign_message && encrypt_then_sign {
+        if sign_message && self.setting.is_assertion_encrypted {
             xml = construct_saml_signature(
                 &xml,
                 true,
@@ -354,6 +357,8 @@ impl IdentityProvider {
                 decrypt_key: None,
                 decrypt_key_pass: None,
                 clock_drifts: self.setting.clock_drifts,
+                expected_audience: None,
+                expected_in_response_to: None,
             },
             request,
         )

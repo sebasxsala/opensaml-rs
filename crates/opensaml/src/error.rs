@@ -22,6 +22,12 @@ pub enum OpenSamlError {
     /// Issuer in the message does not match the one declared in metadata.
     #[error("ERR_UNMATCH_ISSUER")]
     UnmatchIssuer,
+    /// `<Audience>` does not include this Service Provider's entity ID.
+    #[error("ERR_UNMATCH_AUDIENCE")]
+    UnmatchAudience,
+    /// `InResponseTo` does not match the originating request ID.
+    #[error("ERR_INVALID_IN_RESPONSE_TO")]
+    InvalidInResponseTo,
     /// Response carried an undefined `<StatusCode>`.
     #[error("ERR_UNDEFINED_STATUS")]
     UndefinedStatus,

@@ -249,6 +249,8 @@ pub fn parse_logout_request(
             decrypt_key: None,
             decrypt_key_pass: None,
             clock_drifts: self_setting.clock_drifts,
+            expected_audience: None,
+            expected_in_response_to: None,
         },
         request,
     )
@@ -272,6 +274,8 @@ pub fn parse_logout_response(
             decrypt_key: None,
             decrypt_key_pass: None,
             clock_drifts: self_setting.clock_drifts,
+            expected_audience: None,
+            expected_in_response_to: None,
         },
         request,
     )

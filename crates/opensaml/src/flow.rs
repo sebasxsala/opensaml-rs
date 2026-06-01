@@ -71,6 +71,10 @@ pub struct FlowOptions<'a> {
     pub decrypt_key_pass: Option<&'a str>,
     /// Clock drift tolerance `(not_before_ms, not_on_or_after_ms)`.
     pub clock_drifts: (i64, i64),
+    /// Expected `<Audience>` (this SP's entity ID); `None` skips the check.
+    pub expected_audience: Option<&'a str>,
+    /// Expected `InResponseTo` (originating request ID); `None` skips the check.
+    pub expected_in_response_to: Option<&'a str>,
 }
 
 /// Result of a successful flow.
@@ -219,34 +223,51 @@ fn verify_detached(
     ))
 }
 
+fn audience_contains(extracted: &Value, expected: &str) -> bool {
+    match extracted.get("audience") {
+        Some(Value::Str(s)) => s == expected,
+        Some(Value::Array(items)) => items.iter().any(|v| v.as_str() == Some(expected)),
+        _ => false,
+    }
+}
+
 fn validate_context(
     parser_type: ParserType,
     extracted: &Value,
-    from_issuer: Option<&str>,
-    clock_drifts: (i64, i64),
+    opts: &FlowOptions<'_>,
 ) -> Result<(), OpenSamlError> {
     let is_response = matches!(
         parser_type,
         ParserType::SamlResponse | ParserType::LogoutResponse
     );
     if is_response {
-        if let Some(expected) = from_issuer {
+        if let Some(expected) = opts.from_issuer {
             if extracted.get_str("issuer") != Some(expected) {
                 return Err(OpenSamlError::UnmatchIssuer);
             }
         }
+        if let Some(expected) = opts.expected_in_response_to {
+            if extracted.get_str("response.inResponseTo") != Some(expected) {
+                return Err(OpenSamlError::InvalidInResponseTo);
+            }
+        }
     }
     if parser_type == ParserType::SamlResponse {
+        if let Some(expected) = opts.expected_audience {
+            if !audience_contains(extracted, expected) {
+                return Err(OpenSamlError::UnmatchAudience);
+            }
+        }
         if let Some(session_not_on_or_after) = extracted.get_str("sessionIndex.sessionNotOnOrAfter")
         {
-            if !verify_time(None, Some(session_not_on_or_after), clock_drifts) {
+            if !verify_time(None, Some(session_not_on_or_after), opts.clock_drifts) {
                 return Err(OpenSamlError::ExpiredSession);
             }
         }
         if let Some(conditions) = extracted.get("conditions") {
             let not_before = conditions.get_str("notBefore");
             let not_on_or_after = conditions.get_str("notOnOrAfter");
-            if !verify_time(not_before, not_on_or_after, clock_drifts) {
+            if !verify_time(not_before, not_on_or_after, opts.clock_drifts) {
                 return Err(OpenSamlError::SubjectUnconfirmed);
             }
         }
@@ -292,7 +313,7 @@ pub fn flow(opts: &FlowOptions<'_>, request: &HttpRequest) -> Result<FlowResult,
 
     let fields = default_fields(parser_type, assertion.as_deref())?;
     let extracted = extract(&saml_content, &fields)?;
-    validate_context(parser_type, &extracted, opts.from_issuer, opts.clock_drifts)?;
+    validate_context(parser_type, &extracted, opts)?;
 
     Ok(FlowResult {
         saml_content,

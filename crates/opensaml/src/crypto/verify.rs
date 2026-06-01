@@ -160,6 +160,15 @@ pub fn verify_signature(
     }
 }
 
+/// Verify the enveloped XML-DSig signature on a metadata document against
+/// trusted certificate(s); returns whether it is valid.
+pub fn verify_metadata_signature(
+    xml: &str,
+    trusted_certs: &[String],
+) -> Result<bool, OpenSamlError> {
+    Ok(verify_signature(xml, trusted_certs)?.0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

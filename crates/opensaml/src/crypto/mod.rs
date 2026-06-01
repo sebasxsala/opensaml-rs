@@ -23,4 +23,4 @@ pub use enc::{decrypt_assertion, encrypt_assertion};
 #[cfg(feature = "crypto-bergshamra")]
 pub use sign::{construct_message_signature, construct_saml_signature, verify_message_signature};
 #[cfg(feature = "crypto-bergshamra")]
-pub use verify::verify_signature;
+pub use verify::{verify_metadata_signature, verify_signature};

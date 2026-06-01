@@ -174,6 +174,13 @@ impl Metadata {
             .filter(|b| self.get_single_logout_service(*b).is_some())
             .collect()
     }
+
+    /// Verify this metadata document's enveloped signature against trusted
+    /// certificate(s) (federation trust anchor). Requires `crypto-bergshamra`.
+    #[cfg(feature = "crypto-bergshamra")]
+    pub fn verify_signature(&self, trusted_certs: &[String]) -> Result<bool, OpenSamlError> {
+        crate::crypto::verify_metadata_signature(&self.xml, trusted_certs)
+    }
 }
 
 #[cfg(test)]
