@@ -69,6 +69,13 @@ fn verified_content(root: &Node, xml: &str) -> Option<String> {
     None
 }
 
+/// True for a signed `<Reference>` URI that is not same-document (i.e. not a
+/// `#id` fragment or the whole document). Such references can pull external or
+/// local-file content into the verified set and are rejected for SAML.
+fn is_external_reference(uri: &str) -> bool {
+    !uri.is_empty() && !uri.starts_with('#')
+}
+
 /// First `<X509Certificate>` text found inside a `<Signature>` (the cert the
 /// sender embedded in the message), if any.
 fn inline_signature_cert(node: &Node, in_signature: bool) -> Option<String> {
@@ -134,6 +141,15 @@ pub fn verify_signature(
         have_key = true;
         let mut manager = KeysManager::new();
         manager.add_key(key);
+        // Trust model (audited against bergshamra 0.4.0):
+        // - `trusted_keys_only`: verification uses only the metadata-pinned key;
+        //   inline KeyInfo (X509Certificate/KeyValue) is never imported as key
+        //   material (`resolve_key_info` only selects among manager keys).
+        // - `strict_verification`: each signed reference must target the document
+        //   element, an ancestor, or a sibling of the Signature (XSW guard).
+        // - `insecure(true)`: skips X.509 *chain* validation (expiry/CRL/CA path)
+        //   only — irrelevant to our pinning model and never gates the signature,
+        //   digest, or XSW checks, which always run.
         let ctx = DsigContext::new(manager)
             .with_trusted_keys_only(true)
             .with_strict_verification(true)
@@ -142,6 +158,12 @@ pub fn verify_signature(
             Ok(VerifyResult::Valid { references, .. }) => {
                 if references.is_empty() {
                     return Err(OpenSamlError::Crypto("NO_SIGNATURE_REFERENCES".into()));
+                }
+                // Only same-document references (`#id` or whole-document) are
+                // allowed; reject external/remote/file URIs to avoid pulling
+                // unsigned or local content into the verified set.
+                if references.iter().any(|r| is_external_reference(&r.uri)) {
+                    return Err(OpenSamlError::Crypto("ERR_EXTERNAL_REFERENCE".into()));
                 }
                 return Ok((true, verified_content(root, xml)));
             }
@@ -173,6 +195,16 @@ pub fn verify_metadata_signature(
 mod tests {
     use super::*;
     use crate::xml::{extract, ExtractorField};
+
+    #[test]
+    fn external_reference_detection() {
+        assert!(!is_external_reference("")); // whole document
+        assert!(!is_external_reference("#_assertion123")); // same-document
+        assert!(is_external_reference("https://evil.example.com/x"));
+        assert!(is_external_reference("/etc/passwd"));
+        assert!(is_external_reference("file:///etc/passwd"));
+        assert!(is_external_reference("cid:attachment"));
+    }
 
     const RESPONSE_SIGNED: &str = include_str!("../../tests/fixtures/response_signed.xml");
     const SIGNED_REQUEST: &str = include_str!("../../tests/fixtures/signed_request_sha256.xml");

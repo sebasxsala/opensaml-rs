@@ -45,6 +45,13 @@ Versioning while the API is still pre-1.0.
   (`tests/{xsw,hardening,robustness}.rs`). Schema validation remains pluggable
   via `context::set_schema_validator` on top of the always-on DOCTYPE rejection.
 - Runnable end-to-end example: `cargo run -p opensaml --example sso`.
+- Crypto-backend audit (bergshamra 0.4.0): documented the verification trust
+  model in `crypto::verify` (signature, digest and XSW position checks always
+  run; `insecure` only skips X.509 *chain* validation, irrelevant to the
+  metadata key-pinning model; `trusted_keys_only` never imports inline key
+  material). Hardening: signed `<Reference>` URIs must be same-document
+  (`#id` or whole-document); external/remote/file references are rejected
+  (`ERR_EXTERNAL_REFERENCE`).
 
 ### Changed
 
