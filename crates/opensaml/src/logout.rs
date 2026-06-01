@@ -116,6 +116,7 @@ pub fn create_logout_request(
 }
 
 /// Like [`create_logout_request`] but uses `message_id` when provided.
+#[allow(clippy::too_many_arguments)] // extends the 7-arg samlify-shaped API with optional `message_id`
 pub fn create_logout_request_with_id(
     init_setting: &EntitySetting,
     init_meta: &Metadata,
@@ -214,6 +215,7 @@ pub fn create_logout_response(
 }
 
 /// Like [`create_logout_response`] but uses `message_id` when provided.
+#[allow(clippy::too_many_arguments)] // extends the 7-arg samlify-shaped API with optional `message_id`
 pub fn create_logout_response_with_id(
     init_setting: &EntitySetting,
     init_meta: &Metadata,
