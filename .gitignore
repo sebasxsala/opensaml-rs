@@ -22,3 +22,6 @@ reference/upstream-samlify/*/repository/
 .cursor/
 .kiro/
 skills-lock.json
+
+# Local working parity notes (not committed)
+PARITY.md

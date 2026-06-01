@@ -2,7 +2,9 @@
 
 use crate::binding::{base64_encode, build_redirect_url};
 use crate::constants::{Binding, CertUse, ParserType};
-use crate::entity::{generate_id, now_iso8601, BindingContext, EntitySetting};
+use crate::entity::{
+    generate_id, now_iso8601, BindingContext, CustomTagReplacement, EntitySetting,
+};
 use crate::error::OpenSamlError;
 use crate::flow::{flow, FlowOptions, FlowResult, HttpRequest};
 use crate::idp::IdentityProvider;
@@ -59,10 +61,13 @@ impl ServiceProvider {
     ///
     /// When both sides require signing, the request is signed (requires the
     /// `crypto-bergshamra` feature and the SP's `private_key`/`signing_cert`).
+    /// `custom` (samlify `customTagReplacement`) overrides template rendering,
+    /// receiving the resolved template and returning `(id, xml)`.
     pub fn create_login_request(
         &self,
         idp: &IdentityProvider,
         binding: Binding,
+        custom: Option<CustomTagReplacement<'_>>,
     ) -> Result<BindingContext, OpenSamlError> {
         if self.metadata.is_authn_request_signed() != idp.metadata.is_want_authn_requests_signed() {
             return Err(OpenSamlError::Invalid(
@@ -73,29 +78,40 @@ impl ServiceProvider {
             .metadata
             .get_single_sign_on_service(binding)
             .ok_or_else(|| OpenSamlError::MissingMetadata("SingleSignOnService".into()))?;
-        let acs = self
-            .metadata
-            .get_assertion_consumer_service(Binding::Post)
-            .unwrap_or_default();
-        let name_id_format = self
+        let template = self
             .setting
-            .name_id_format
-            .first()
-            .cloned()
-            .unwrap_or_default();
-        let id = generate_id();
-        let xml = replace_tags_by_value(
-            LOGIN_REQUEST_TEMPLATE,
-            &[
-                ("ID", id.clone()),
-                ("IssueInstant", now_iso8601()),
-                ("Destination", destination.clone()),
-                ("AssertionConsumerServiceURL", acs),
-                ("Issuer", self.entity_id()),
-                ("NameIDFormat", name_id_format),
-                ("AllowCreate", self.setting.allow_create.to_string()),
-            ],
-        );
+            .login_request_template
+            .as_deref()
+            .unwrap_or(LOGIN_REQUEST_TEMPLATE);
+        let (id, xml) = match custom {
+            Some(f) => f(template),
+            None => {
+                let acs = self
+                    .metadata
+                    .get_assertion_consumer_service(Binding::Post)
+                    .unwrap_or_default();
+                let name_id_format = self
+                    .setting
+                    .name_id_format
+                    .first()
+                    .cloned()
+                    .unwrap_or_default();
+                let id = generate_id();
+                let xml = replace_tags_by_value(
+                    template,
+                    &[
+                        ("ID", id.clone()),
+                        ("IssueInstant", now_iso8601()),
+                        ("Destination", destination.clone()),
+                        ("AssertionConsumerServiceURL", acs),
+                        ("Issuer", self.entity_id()),
+                        ("NameIDFormat", name_id_format),
+                        ("AllowCreate", self.setting.allow_create.to_string()),
+                    ],
+                );
+                (id, xml)
+            }
+        };
         let relay_state =
             (!self.setting.relay_state.is_empty()).then(|| self.setting.relay_state.clone());
 
@@ -164,7 +180,15 @@ impl ServiceProvider {
                 (append_signature(&destination, &octet, &sig), None, None)
             }
             Binding::Post => {
-                let signed = construct_saml_signature(xml, true, &key, cert, sig_alg)?;
+                let signed = construct_saml_signature(
+                    xml,
+                    true,
+                    &key,
+                    cert,
+                    sig_alg,
+                    &self.setting.transformation_algorithms,
+                    self.setting.signature_config.as_ref(),
+                )?;
                 (base64_encode(signed.as_bytes()), None, None)
             }
             Binding::SimpleSign => {
@@ -272,7 +296,7 @@ mod tests {
     #[test]
     fn create_unsigned_login_request_redirect_round_trips() -> Result<(), Box<dyn std::error::Error>>
     {
-        let ctx = unsigned_sp()?.create_login_request(&unsigned_idp()?, Binding::Redirect)?;
+        let ctx = unsigned_sp()?.create_login_request(&unsigned_idp()?, Binding::Redirect, None)?;
         let url = Url::parse(&ctx.context)?;
         let (_, value) = url
             .query_pairs()
@@ -286,9 +310,28 @@ mod tests {
 
     #[test]
     fn create_unsigned_login_request_post_is_base64() -> Result<(), Box<dyn std::error::Error>> {
-        let ctx = unsigned_sp()?.create_login_request(&unsigned_idp()?, Binding::Post)?;
+        let ctx = unsigned_sp()?.create_login_request(&unsigned_idp()?, Binding::Post, None)?;
         let xml = String::from_utf8(base64_decode(&ctx.context)?)?;
         assert!(xml.starts_with("<samlp:AuthnRequest"));
+        Ok(())
+    }
+
+    #[test]
+    fn custom_tag_replacement_overrides_request() -> Result<(), Box<dyn std::error::Error>> {
+        let replace = |_t: &str| {
+            (
+                "_custom".to_string(),
+                "<samlp:AuthnRequest ID=\"_custom\"/>".to_string(),
+            )
+        };
+        let ctx = unsigned_sp()?.create_login_request(
+            &unsigned_idp()?,
+            Binding::Post,
+            Some(&replace as &dyn Fn(&str) -> (String, String)),
+        )?;
+        assert_eq!(ctx.id, "_custom");
+        let xml = String::from_utf8(base64_decode(&ctx.context)?)?;
+        assert!(xml.contains("ID=\"_custom\""));
         Ok(())
     }
 }
@@ -372,7 +415,7 @@ mod crypto_tests {
                 ..Default::default()
             },
         )?;
-        let ctx = sp.create_login_request(&signing_idp()?, Binding::Post)?;
+        let ctx = sp.create_login_request(&signing_idp()?, Binding::Post, None)?;
         let signed_xml = String::from_utf8(base64_decode(&ctx.context)?)?;
         let (verified, _) = verify_signature(&signed_xml, &[SP_SIGNING_CERT.to_string()])?;
         assert!(
@@ -398,7 +441,7 @@ mod crypto_tests {
                 ..Default::default()
             },
         )?;
-        let ctx = sp.create_login_request(&signing_idp()?, Binding::Redirect)?;
+        let ctx = sp.create_login_request(&signing_idp()?, Binding::Redirect, None)?;
         assert!(ctx.context.contains("&SigAlg="));
         assert!(ctx.context.contains("&Signature="));
         Ok(())

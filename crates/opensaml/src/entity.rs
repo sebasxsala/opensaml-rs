@@ -2,7 +2,8 @@
 //! [`crate::idp::IdentityProvider`] (samlify `entity.ts` `defaultEntitySetting`).
 
 use crate::constants::{
-    data_encryption_algorithm, key_encryption_algorithm, signature_algorithm, MessageSignatureOrder,
+    data_encryption_algorithm, key_encryption_algorithm, signature_algorithm, transform_algorithm,
+    MessageSignatureOrder,
 };
 
 /// Runtime configuration for an entity (keys, algorithms, flags).
@@ -54,6 +55,62 @@ pub struct EntitySetting {
     pub enc_private_key_pass: Option<String>,
     /// Clock drift tolerance `(not_before_ms, not_on_or_after_ms)`.
     pub clock_drifts: (i64, i64),
+    /// IdP: tag prefix for the `<EncryptedAssertion>` element (default `saml`).
+    pub tag_prefix_encrypted_assertion: String,
+    /// IdP: login `<Response>` template + attribute configuration.
+    pub login_response_template: Option<crate::template::LoginResponseTemplate>,
+    /// SP: custom `<AuthnRequest>` template (`None` uses the default).
+    pub login_request_template: Option<String>,
+    /// Custom `<LogoutRequest>` template (`None` uses the default).
+    pub logout_request_template: Option<String>,
+    /// Custom `<LogoutResponse>` template (`None` uses the default).
+    pub logout_response_template: Option<String>,
+    /// Custom embedded-signature placement/prefix (`None` uses the default).
+    pub signature_config: Option<SignatureConfig>,
+    /// XML-DSig transforms applied to signed references (default
+    /// enveloped-signature + exclusive C14N).
+    pub transformation_algorithms: Vec<String>,
+}
+
+/// Custom message rendering hook (samlify `customTagReplacement`): given the
+/// resolved template, returns `(id, rendered_xml)`.
+pub type CustomTagReplacement<'a> = &'a dyn Fn(&str) -> (String, String);
+
+/// Where to place the `<Signature>` relative to the reference element
+/// (samlify `signatureConfig.location.action`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SignatureAction {
+    /// Insert as the reference's next sibling (samlify default).
+    #[default]
+    After,
+    /// Insert as the reference's previous sibling.
+    Before,
+    /// Insert as the reference's first child.
+    Prepend,
+    /// Insert as the reference's last child.
+    Append,
+}
+
+/// Customizes the embedded XML-DSig signature (samlify `signatureConfig`).
+#[derive(Debug, Clone)]
+pub struct SignatureConfig {
+    /// Element prefix for the signature (default `ds`).
+    pub prefix: String,
+    /// `local-name()` XPath of the reference element; `None` keeps the default
+    /// (after the signed target's `<Issuer>`).
+    pub reference: Option<String>,
+    /// Placement relative to `reference`.
+    pub action: SignatureAction,
+}
+
+impl Default for SignatureConfig {
+    fn default() -> Self {
+        Self {
+            prefix: "ds".to_string(),
+            reference: None,
+            action: SignatureAction::After,
+        }
+    }
 }
 
 impl Default for EntitySetting {
@@ -81,6 +138,16 @@ impl Default for EntitySetting {
             enc_private_key: None,
             enc_private_key_pass: None,
             clock_drifts: (0, 0),
+            tag_prefix_encrypted_assertion: "saml".to_string(),
+            login_response_template: None,
+            login_request_template: None,
+            logout_request_template: None,
+            logout_response_template: None,
+            signature_config: None,
+            transformation_algorithms: vec![
+                transform_algorithm::ENVELOPED_SIGNATURE.to_string(),
+                transform_algorithm::EXC_C14N.to_string(),
+            ],
         }
     }
 }
@@ -88,6 +155,28 @@ impl Default for EntitySetting {
 /// Generate a SAML message ID (`_` + UUIDv4), matching samlify's default.
 pub fn generate_id() -> String {
     format!("_{}", uuid::Uuid::new_v4())
+}
+
+/// The authenticated subject an IdP issues a response for (samlify `user`).
+#[derive(Debug, Clone, Default)]
+pub struct User {
+    /// `<NameID>` value (samlify `user.email`).
+    pub name_id: String,
+    /// Attribute values keyed by their `LoginResponseAttribute.value_tag`;
+    /// each fills the `{attr<Tag>}` placeholder produced for that attribute.
+    pub attributes: Vec<(String, String)>,
+    /// `SessionIndex` for Single Logout requests (samlify `user.sessionIndex`).
+    pub session_index: Option<String>,
+}
+
+impl User {
+    /// A subject with just a NameID and no attributes.
+    pub fn new(name_id: impl Into<String>) -> Self {
+        Self {
+            name_id: name_id.into(),
+            ..Default::default()
+        }
+    }
 }
 
 /// Current UTC time as an ISO-8601 `IssueInstant` (`YYYY-MM-DDTHH:MM:SSZ`).

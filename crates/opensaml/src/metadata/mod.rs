@@ -160,6 +160,20 @@ impl Metadata {
     pub fn get_single_logout_service(&self, binding: Binding) -> Option<String> {
         location_for_binding(self.meta.get("singleLogoutService"), binding)
     }
+
+    /// Write the metadata XML to `path` (samlify `exportMetadata`).
+    pub fn export_metadata(&self, path: impl AsRef<std::path::Path>) -> std::io::Result<()> {
+        std::fs::write(path, &self.xml)
+    }
+
+    /// Bindings for which a `SingleLogoutService` endpoint is declared
+    /// (samlify `getSupportBindings`).
+    pub fn get_support_bindings(&self) -> Vec<Binding> {
+        [Binding::Redirect, Binding::Post, Binding::SimpleSign]
+            .into_iter()
+            .filter(|b| self.get_single_logout_service(*b).is_some())
+            .collect()
+    }
 }
 
 #[cfg(test)]
@@ -210,6 +224,18 @@ mod tests {
             Some("https://sp.example.org/sp/slo")
         );
         assert!(sp.get_x509_certificate(CertUse::Encryption).is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn support_bindings_and_export() -> Result<(), Box<dyn std::error::Error>> {
+        let sp = SpMetadata::from_xml(SPMETA)?;
+        assert!(sp.get_support_bindings().contains(&Binding::Redirect));
+        let mut path = std::env::temp_dir();
+        path.push(format!("opensaml_md_{}.xml", std::process::id()));
+        sp.export_metadata(&path)?;
+        assert_eq!(std::fs::read_to_string(&path)?, sp.get_metadata());
+        std::fs::remove_file(&path)?;
         Ok(())
     }
 }

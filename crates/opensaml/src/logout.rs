@@ -3,7 +3,7 @@
 
 use crate::binding::{base64_encode, build_redirect_url};
 use crate::constants::{status_code, Binding, CertUse, ParserType};
-use crate::entity::{generate_id, now_iso8601, BindingContext, EntitySetting};
+use crate::entity::{generate_id, now_iso8601, BindingContext, EntitySetting, User};
 use crate::error::OpenSamlError;
 use crate::flow::{flow, FlowOptions, FlowResult, HttpRequest};
 use crate::metadata::Metadata;
@@ -48,7 +48,15 @@ fn sign_logout(
             Ok((append_signature(destination, &octet, &sig), None, None))
         }
         _ => {
-            let signed = construct_saml_signature(xml, true, &key, cert, sig_alg)?;
+            let signed = construct_saml_signature(
+                xml,
+                true,
+                &key,
+                cert,
+                sig_alg,
+                &setting.transformation_algorithms,
+                setting.signature_config.as_ref(),
+            )?;
             Ok((base64_encode(signed.as_bytes()), None, None))
         }
     }
@@ -83,12 +91,15 @@ fn unsigned_context(
 }
 
 /// Build a `<LogoutRequest>` from `init` to `target` (samlify `createLogoutRequest`).
+///
+/// `user` supplies the `<NameID>` and an optional `SessionIndex` (available to
+/// custom `logout_request_template`s; the default template omits it, as samlify).
 pub fn create_logout_request(
     init_setting: &EntitySetting,
     init_meta: &Metadata,
     target_meta: &Metadata,
     binding: Binding,
-    logout_name_id: &str,
+    user: &User,
     relay_state: Option<&str>,
     want_signed: bool,
 ) -> Result<BindingContext, OpenSamlError> {
@@ -101,15 +112,23 @@ pub fn create_logout_request(
         .first()
         .cloned()
         .unwrap_or_default();
+    let template = init_setting
+        .logout_request_template
+        .as_deref()
+        .unwrap_or(LOGOUT_REQUEST_TEMPLATE);
     let xml = replace_tags_by_value(
-        LOGOUT_REQUEST_TEMPLATE,
+        template,
         &[
             ("ID", id.clone()),
             ("IssueInstant", now_iso8601()),
             ("Destination", destination.clone()),
             ("Issuer", issuer_of(init_setting, init_meta)),
             ("NameIDFormat", name_id_format),
-            ("NameID", logout_name_id.to_string()),
+            ("NameID", user.name_id.clone()),
+            (
+                "SessionIndex",
+                user.session_index.clone().unwrap_or_default(),
+            ),
         ],
     );
     let (context, signature, sig_alg) = if want_signed {
@@ -160,8 +179,12 @@ pub fn create_logout_response(
         .get_single_logout_service(binding)
         .ok_or_else(|| OpenSamlError::MissingMetadata("SingleLogoutService".into()))?;
     let id = generate_id();
+    let template = init_setting
+        .logout_response_template
+        .as_deref()
+        .unwrap_or(LOGOUT_RESPONSE_TEMPLATE);
     let xml = replace_tags_by_value(
-        LOGOUT_RESPONSE_TEMPLATE,
+        template,
         &[
             ("ID", id.clone()),
             ("IssueInstant", now_iso8601()),
@@ -297,7 +320,7 @@ mod tests {
             &sp.metadata,
             &idp.metadata,
             Binding::Redirect,
-            "user@example.com",
+            &User::new("user@example.com"),
             None,
             false,
         )?;

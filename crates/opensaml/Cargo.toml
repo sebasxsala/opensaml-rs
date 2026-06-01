@@ -15,7 +15,7 @@ name = "opensaml"
 path = "src/lib.rs"
 
 [features]
-default = []
+default = ["crypto-bergshamra"]
 crypto-bergshamra = ["dep:bergshamra"]
 
 [dependencies]

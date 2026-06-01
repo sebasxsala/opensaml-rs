@@ -1,12 +1,32 @@
 //! SAML Identity Provider entity (samlify `entity-idp.ts`).
 
 use crate::constants::{status_code, Binding, ParserType};
-use crate::entity::{generate_id, iso8601_offset, now_iso8601, BindingContext, EntitySetting};
+use crate::entity::{
+    generate_id, iso8601_offset, now_iso8601, BindingContext, CustomTagReplacement, EntitySetting,
+    User,
+};
 use crate::error::OpenSamlError;
 use crate::flow::{flow, FlowOptions, FlowResult, HttpRequest};
 use crate::metadata::{generate_idp_metadata, IdpMetadata, IdpMetadataConfig};
 use crate::sp::ServiceProvider;
-use crate::template::{replace_tags_by_value, LOGIN_RESPONSE_TEMPLATE};
+use crate::template::{
+    attr_tag, attribute_statement_builder, replace_tags_by_value, ATTRIBUTE_STATEMENT_TEMPLATE,
+    ATTRIBUTE_TEMPLATE, LOGIN_RESPONSE_TEMPLATE,
+};
+
+/// Optional inputs for [`IdentityProvider::create_login_response`]
+/// (samlify's `createLoginResponse` trailing parameters).
+#[derive(Default)]
+pub struct LoginResponseOptions<'a> {
+    /// `InResponseTo` — the SP request id being answered.
+    pub in_response_to: Option<&'a str>,
+    /// RelayState to echo back to the SP.
+    pub relay_state: Option<&'a str>,
+    /// Encrypt-then-sign instead of the default sign-then-encrypt.
+    pub encrypt_then_sign: bool,
+    /// Custom template rendering hook (samlify `customTagReplacement`).
+    pub custom: Option<CustomTagReplacement<'a>>,
+}
 
 /// A SAML 2.0 Identity Provider: runtime [`EntitySetting`] plus parsed [`IdpMetadata`].
 #[derive(Debug, Clone)]
@@ -53,15 +73,36 @@ impl IdentityProvider {
             .unwrap_or_default()
     }
 
-    /// Render the login `<Response>` XML for `sp` (samlify template fill).
+    /// Render the login `<Response>` XML for `sp`, returning `(id, xml)`.
+    ///
+    /// `custom` (samlify `customTagReplacement`) overrides tag filling: it
+    /// receives the template with the `<AttributeStatement>` already injected.
     fn render_login_response(
         &self,
         sp: &ServiceProvider,
         in_response_to: Option<&str>,
-        name_id: &str,
-        id: &str,
+        user: &User,
         acs: &str,
-    ) -> String {
+        custom: Option<CustomTagReplacement<'_>>,
+    ) -> (String, String) {
+        let tmpl = self.setting.login_response_template.as_ref();
+        let base = tmpl
+            .and_then(|t| t.context.as_deref())
+            .unwrap_or(LOGIN_RESPONSE_TEMPLATE);
+        let attributes = tmpl.map(|t| t.attributes.as_slice()).unwrap_or(&[]);
+        let attribute_statement = if attributes.is_empty() {
+            String::new()
+        } else {
+            attribute_statement_builder(
+                attributes,
+                ATTRIBUTE_TEMPLATE,
+                ATTRIBUTE_STATEMENT_TEMPLATE,
+            )
+        };
+        let prepared = base.replacen("{AttributeStatement}", &attribute_statement, 1);
+        if let Some(f) = custom {
+            return f(&prepared);
+        }
         let now = now_iso8601();
         let later = iso8601_offset(300);
         let name_id_format = self
@@ -70,57 +111,65 @@ impl IdentityProvider {
             .first()
             .cloned()
             .unwrap_or_default();
-        replace_tags_by_value(
-            LOGIN_RESPONSE_TEMPLATE,
-            &[
-                ("ID", id.to_string()),
-                ("AssertionID", generate_id()),
-                ("Destination", acs.to_string()),
-                ("SubjectRecipient", acs.to_string()),
-                ("AssertionConsumerServiceURL", acs.to_string()),
-                (
-                    "Audience",
-                    sp.metadata.get_entity_id().unwrap_or_default().to_string(),
-                ),
-                ("Issuer", self.entity_id()),
-                ("IssueInstant", now.clone()),
-                ("StatusCode", status_code::SUCCESS.to_string()),
-                ("ConditionsNotBefore", now),
-                ("ConditionsNotOnOrAfter", later.clone()),
-                ("SubjectConfirmationDataNotOnOrAfter", later),
-                ("NameIDFormat", name_id_format),
-                ("NameID", name_id.to_string()),
-                (
-                    "InResponseTo",
-                    in_response_to.unwrap_or_default().to_string(),
-                ),
-                ("AuthnStatement", String::new()),
-                ("AttributeStatement", String::new()),
-            ],
-        )
+        let id = generate_id();
+        let mut tags: Vec<(&str, String)> = vec![
+            ("ID", id.clone()),
+            ("AssertionID", generate_id()),
+            ("Destination", acs.to_string()),
+            ("SubjectRecipient", acs.to_string()),
+            ("AssertionConsumerServiceURL", acs.to_string()),
+            (
+                "Audience",
+                sp.metadata.get_entity_id().unwrap_or_default().to_string(),
+            ),
+            ("Issuer", self.entity_id()),
+            ("IssueInstant", now.clone()),
+            ("StatusCode", status_code::SUCCESS.to_string()),
+            ("ConditionsNotBefore", now),
+            ("ConditionsNotOnOrAfter", later.clone()),
+            ("SubjectConfirmationDataNotOnOrAfter", later),
+            ("NameIDFormat", name_id_format),
+            ("NameID", user.name_id.clone()),
+            (
+                "InResponseTo",
+                in_response_to.unwrap_or_default().to_string(),
+            ),
+            ("AuthnStatement", String::new()),
+        ];
+        // Attribute value placeholders ({attr<Tag>}) are filled from the user's
+        // attributes after the AttributeStatement is expanded into the template.
+        let attr_pairs: Vec<(String, String)> = user
+            .attributes
+            .iter()
+            .map(|(tag, value)| (attr_tag(tag), value.clone()))
+            .collect();
+        for (key, value) in &attr_pairs {
+            tags.push((key.as_str(), value.clone()));
+        }
+        (id, replace_tags_by_value(&prepared, &tags))
     }
 
     /// Generate a login `<Response>` for `sp` over `binding` (samlify `createLoginResponse`).
     ///
     /// Requires the `crypto-bergshamra` feature: the response is always signed
-    /// (assertion- or message-level) and optionally encrypted.
+    /// (assertion- or message-level) and optionally encrypted. Attributes are
+    /// taken from `user`; `options` carries `InResponseTo`, RelayState, the
+    /// encrypt-then-sign toggle, and an optional `customTagReplacement` hook.
     pub fn create_login_response(
         &self,
         sp: &ServiceProvider,
-        in_response_to: Option<&str>,
         binding: Binding,
-        name_id: &str,
-        relay_state: Option<&str>,
-        encrypt_then_sign: bool,
+        user: &User,
+        options: &LoginResponseOptions<'_>,
     ) -> Result<BindingContext, OpenSamlError> {
         let acs = sp
             .metadata
             .get_assertion_consumer_service(binding)
             .ok_or_else(|| OpenSamlError::MissingMetadata("AssertionConsumerService".into()))?;
-        let id = generate_id();
-        let raw = self.render_login_response(sp, in_response_to, name_id, &id, &acs);
-        let signed = self.finalize_login_response(sp, binding, &raw, encrypt_then_sign)?;
-        let relay = relay_state.map(str::to_string);
+        let (id, raw) =
+            self.render_login_response(sp, options.in_response_to, user, &acs, options.custom);
+        let signed = self.finalize_login_response(sp, binding, &raw, options.encrypt_then_sign)?;
+        let relay = options.relay_state.map(str::to_string);
         let (context, signature, sig_alg) =
             self.bind_response(binding, &signed, &acs, relay.as_deref())?;
         Ok(BindingContext {
@@ -224,10 +273,26 @@ impl IdentityProvider {
 
         // step: sign assertion -> (encrypt) -> sign message
         if want_assertions_signed {
-            xml = construct_saml_signature(&xml, false, &key, cert, sig_alg)?;
+            xml = construct_saml_signature(
+                &xml,
+                false,
+                &key,
+                cert,
+                sig_alg,
+                &sp.setting.transformation_algorithms,
+                None,
+            )?;
         }
         if sign_message && !encrypt_then_sign {
-            xml = construct_saml_signature(&xml, true, &key, cert, sig_alg)?;
+            xml = construct_saml_signature(
+                &xml,
+                true,
+                &key,
+                cert,
+                sig_alg,
+                &sp.setting.transformation_algorithms,
+                self.setting.signature_config.as_ref(),
+            )?;
         }
         if self.setting.is_assertion_encrypted {
             let encrypt_cert = sp
@@ -239,11 +304,19 @@ impl IdentityProvider {
                 &encrypt_cert,
                 &self.setting.data_encryption_algorithm,
                 &self.setting.key_encryption_algorithm,
-                "saml",
+                &self.setting.tag_prefix_encrypted_assertion,
             )?;
         }
         if sign_message && encrypt_then_sign {
-            xml = construct_saml_signature(&xml, true, &key, cert, sig_alg)?;
+            xml = construct_saml_signature(
+                &xml,
+                true,
+                &key,
+                cert,
+                sig_alg,
+                &sp.setting.transformation_algorithms,
+                self.setting.signature_config.as_ref(),
+            )?;
         }
         Ok(xml)
     }
@@ -359,11 +432,12 @@ mod crypto_tests {
         let (idp, sp) = (idp()?, sp()?);
         let ctx = idp.create_login_response(
             &sp,
-            Some("_req123"),
             Binding::Post,
-            "user@example.com",
-            None,
-            false,
+            &User::new("user@example.com"),
+            &LoginResponseOptions {
+                in_response_to: Some("_req123"),
+                ..Default::default()
+            },
         )?;
         let request = HttpRequest::post(vec![("SAMLResponse".into(), ctx.context)]);
         let result = sp.parse_login_response(&idp, Binding::Post, &request)?;
@@ -376,10 +450,59 @@ mod crypto_tests {
     }
 
     #[test]
+    fn login_response_with_attributes() -> Result<(), Box<dyn std::error::Error>> {
+        use crate::template::{LoginResponseAttribute, LoginResponseTemplate};
+        let mut setting = signing_setting();
+        setting.login_response_template = Some(LoginResponseTemplate {
+            context: None,
+            attributes: vec![LoginResponseAttribute {
+                name: "mail".into(),
+                name_format: "urn:oasis:names:tc:SAML:2.0:attrname-format:basic".into(),
+                value_xsi_type: "xs:string".into(),
+                value_tag: "email".into(),
+                value_xmlns_xs: None,
+                value_xmlns_xsi: None,
+            }],
+        });
+        let idp = IdentityProvider::from_config(
+            &IdpMetadataConfig {
+                entity_id: "https://idp.example.com/metadata".into(),
+                signing_certs: vec![CERT.into()],
+                want_authn_requests_signed: true,
+                single_sign_on_service: vec![Endpoint::new(Binding::Post, "https://idp/sso")],
+                ..Default::default()
+            },
+            setting,
+        )?;
+        let sp = sp()?;
+        let user = User {
+            name_id: "alice@example.com".into(),
+            attributes: vec![("email".into(), "alice@example.com".into())],
+            session_index: None,
+        };
+        let ctx = idp.create_login_response(
+            &sp,
+            Binding::Post,
+            &user,
+            &LoginResponseOptions {
+                in_response_to: Some("_r1"),
+                ..Default::default()
+            },
+        )?;
+        let request = HttpRequest::post(vec![("SAMLResponse".into(), ctx.context)]);
+        let parsed = sp.parse_login_response(&idp, Binding::Post, &request)?;
+        assert_eq!(
+            parsed.extract.get_str("attributes.mail"),
+            Some("alice@example.com")
+        );
+        Ok(())
+    }
+
+    #[test]
     fn parse_signed_login_request() -> Result<(), Box<dyn std::error::Error>> {
         use crate::binding::base64_decode;
         let (idp, sp) = (idp()?, sp()?);
-        let ctx = sp.create_login_request(&idp, Binding::Post)?;
+        let ctx = sp.create_login_request(&idp, Binding::Post, None)?;
         let request = HttpRequest::post(vec![("SAMLRequest".into(), ctx.context.clone())]);
         let result = idp.parse_login_request(&sp, Binding::Post, &request)?;
         let signed_xml = String::from_utf8(base64_decode(&ctx.context)?)?;

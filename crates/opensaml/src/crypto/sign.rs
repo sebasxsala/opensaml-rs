@@ -3,16 +3,15 @@
 //! `verifyMessageSignature`), delegating crypto to `bergshamra`
 //! (feature `crypto-bergshamra`).
 
-use super::keys::{build_key_info, load_certificate};
+use super::keys::load_certificate;
 use crate::binding::{base64_decode, base64_encode};
-use crate::constants::{digest_for_signature, namespace};
+use crate::constants::{digest_for_signature, namespace, transform_algorithm};
+use crate::entity::{SignatureAction, SignatureConfig};
 use crate::error::OpenSamlError;
+use crate::util::normalize_cert_string;
 use crate::xml::dom::{self, Node};
 use bergshamra::keys::Key;
 use bergshamra::{sign, DsigContext, KeysManager};
-
-const EXC_C14N: &str = "http://www.w3.org/2001/10/xml-exc-c14n#";
-const ENVELOPED: &str = "http://www.w3.org/2000/09/xmldsig#enveloped-signature";
 
 fn crypto_err(err: impl std::fmt::Display) -> OpenSamlError {
     OpenSamlError::Crypto(err.to_string())
@@ -25,18 +24,69 @@ fn find_assertion(root: &Node) -> Option<&Node> {
     root.children.iter().find(|c| c.local_name == "Assertion")
 }
 
+/// Extract the `local-name()` chain from a samlify-style absolute XPath, e.g.
+/// `/*[local-name(.)='Response']/*[local-name(.)='Issuer']` → `["Response","Issuer"]`.
+fn parse_local_names(xpath: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    let mut rest = xpath;
+    let needle = "local-name(.)='";
+    while let Some(i) = rest.find(needle) {
+        rest = &rest[i + needle.len()..];
+        match rest.find('\'') {
+            Some(end) => {
+                names.push(rest[..end].to_string());
+                rest = &rest[end + 1..];
+            }
+            None => break,
+        }
+    }
+    names
+}
+
+/// Resolve an absolute local-name path from the document root.
+fn resolve_path<'a>(root: &'a Node, names: &[String]) -> Option<&'a Node> {
+    let (first, rest) = names.split_first()?;
+    if &root.local_name != first {
+        return None;
+    }
+    let mut current = root;
+    for name in rest {
+        current = current.children.iter().find(|c| &c.local_name == name)?;
+    }
+    Some(current)
+}
+
+/// Byte offset at which to splice the signature for `action` relative to `node`.
+fn insert_position(xml: &str, node: &Node, action: SignatureAction) -> usize {
+    match action {
+        SignatureAction::After => node.end,
+        SignatureAction::Before => node.start,
+        SignatureAction::Append => xml[node.start..node.end]
+            .rfind('<')
+            .map(|i| node.start + i)
+            .unwrap_or(node.end),
+        SignatureAction::Prepend => xml[node.start..node.end]
+            .find('>')
+            .map(|i| node.start + i + 1)
+            .unwrap_or(node.start),
+    }
+}
+
 /// Construct and embed an enveloped XML-DSig signature (samlify `constructSAMLSignature`).
 ///
 /// When `sign_message` the whole root is referenced; otherwise the contained
-/// `<Assertion>` is referenced. The `<Signature>` is inserted right after the
-/// target's `<Issuer>` (samlify's default location), then bergshamra fills the
-/// digest and signature value. Returns the signed XML.
+/// `<Assertion>` is referenced. `config` (samlify `signatureConfig`) customizes
+/// the element prefix and placement; by default the `<Signature>` is inserted
+/// right after the target's `<Issuer>`. bergshamra then fills the digest and
+/// signature value. Returns the signed XML.
 pub fn construct_saml_signature(
     xml: &str,
     sign_message: bool,
     key: &Key,
     cert: &str,
     sig_alg: &str,
+    transforms: &[String],
+    config: Option<&SignatureConfig>,
 ) -> Result<String, OpenSamlError> {
     let doc = dom::parse(xml)?;
     let target = if sign_message {
@@ -51,21 +101,46 @@ pub fn construct_saml_signature(
         .ok_or_else(|| OpenSamlError::Invalid("signing target has no ID".into()))?;
     let digest = digest_for_signature(sig_alg)
         .ok_or_else(|| OpenSamlError::Crypto(format!("unknown signature algorithm: {sig_alg}")))?;
-    let key_info = build_key_info(cert);
 
+    let prefix = config.map(|c| c.prefix.as_str()).unwrap_or("ds");
+    let cert_b64 = normalize_cert_string(cert);
+    let default_transforms = [
+        transform_algorithm::ENVELOPED_SIGNATURE.to_string(),
+        transform_algorithm::EXC_C14N.to_string(),
+    ];
+    let effective = if transforms.is_empty() {
+        &default_transforms[..]
+    } else {
+        transforms
+    };
+    let transforms_xml: String = effective
+        .iter()
+        .map(|t| format!("<{prefix}:Transform Algorithm=\"{t}\"/>"))
+        .collect();
     let signature = format!(
-        "<ds:Signature xmlns:ds=\"{dsig}\"><ds:SignedInfo><ds:CanonicalizationMethod Algorithm=\"{exc}\"/><ds:SignatureMethod Algorithm=\"{sig_alg}\"/><ds:Reference URI=\"#{id}\"><ds:Transforms><ds:Transform Algorithm=\"{env}\"/><ds:Transform Algorithm=\"{exc}\"/></ds:Transforms><ds:DigestMethod Algorithm=\"{digest}\"/><ds:DigestValue></ds:DigestValue></ds:Reference></ds:SignedInfo><ds:SignatureValue></ds:SignatureValue>{key_info}</ds:Signature>",
+        "<{p}:Signature xmlns:{p}=\"{dsig}\"><{p}:SignedInfo><{p}:CanonicalizationMethod Algorithm=\"{exc}\"/><{p}:SignatureMethod Algorithm=\"{sig_alg}\"/><{p}:Reference URI=\"#{id}\"><{p}:Transforms>{transforms_xml}</{p}:Transforms><{p}:DigestMethod Algorithm=\"{digest}\"/><{p}:DigestValue></{p}:DigestValue></{p}:Reference></{p}:SignedInfo><{p}:SignatureValue></{p}:SignatureValue><{p}:KeyInfo><{p}:X509Data><{p}:X509Certificate>{cert_b64}</{p}:X509Certificate></{p}:X509Data></{p}:KeyInfo></{p}:Signature>",
+        p = prefix,
         dsig = namespace::DSIG,
-        exc = EXC_C14N,
-        env = ENVELOPED,
+        exc = transform_algorithm::EXC_C14N,
     );
 
-    let issuer = target
-        .children
-        .iter()
-        .find(|c| c.local_name == "Issuer")
-        .ok_or_else(|| OpenSamlError::Invalid("signing target has no Issuer".into()))?;
-    let pos = issuer.end;
+    let pos = match config.and_then(|c| c.reference.as_deref()) {
+        Some(reference) => {
+            let names = parse_local_names(reference);
+            let node = resolve_path(&doc.root, &names).ok_or_else(|| {
+                OpenSamlError::Invalid("signatureConfig reference not found".into())
+            })?;
+            insert_position(xml, node, config.map(|c| c.action).unwrap_or_default())
+        }
+        None => {
+            target
+                .children
+                .iter()
+                .find(|c| c.local_name == "Issuer")
+                .ok_or_else(|| OpenSamlError::Invalid("signing target has no Issuer".into()))?
+                .end
+        }
+    };
     let templated = format!("{}{}{}", &xml[..pos], signature, &xml[pos..]);
 
     let mut manager = KeysManager::new();
@@ -126,7 +201,8 @@ mod tests {
     fn sign_message_then_verify_round_trip() -> Result<(), Box<dyn std::error::Error>> {
         let key = load_private_key(SP_PRIVKEY, None)?;
         for alg in [RSA_SHA1, RSA_SHA256, RSA_SHA512] {
-            let signed = construct_saml_signature(AUTHN_REQUEST, true, &key, SP_CERT, alg)?;
+            let signed =
+                construct_saml_signature(AUTHN_REQUEST, true, &key, SP_CERT, alg, &[], None)?;
             assert!(signed.contains("<ds:Signature"));
             assert!(!signed.contains("<ds:SignatureValue></ds:SignatureValue>"));
             let (verified, _) = verify_signature(&signed, &[SP_CERT.to_string()])?;
@@ -138,10 +214,54 @@ mod tests {
     #[test]
     fn sign_assertion_then_verify_round_trip() -> Result<(), Box<dyn std::error::Error>> {
         let key = load_private_key(SP_PRIVKEY, None)?;
-        let signed = construct_saml_signature(RESPONSE, false, &key, SP_CERT, RSA_SHA256)?;
+        let signed =
+            construct_saml_signature(RESPONSE, false, &key, SP_CERT, RSA_SHA256, &[], None)?;
         let (verified, content) = verify_signature(&signed, &[SP_CERT.to_string()])?;
         assert!(verified, "signed assertion should verify");
         assert!(content.ok_or("expected assertion")?.contains("Assertion"));
+        Ok(())
+    }
+
+    #[test]
+    fn custom_signature_config_prefix_and_location() -> Result<(), Box<dyn std::error::Error>> {
+        use crate::entity::{SignatureAction, SignatureConfig};
+        let key = load_private_key(SP_PRIVKEY, None)?;
+        let config = SignatureConfig {
+            prefix: "ds2".into(),
+            reference: Some("/*[local-name(.)='AuthnRequest']/*[local-name(.)='Issuer']".into()),
+            action: SignatureAction::Before,
+        };
+        let signed = construct_saml_signature(
+            AUTHN_REQUEST,
+            true,
+            &key,
+            SP_CERT,
+            RSA_SHA256,
+            &[],
+            Some(&config),
+        )?;
+        assert!(signed.contains("<ds2:Signature"));
+        let (verified, _) = verify_signature(&signed, &[SP_CERT.to_string()])?;
+        assert!(verified, "custom-prefix signature should verify");
+        Ok(())
+    }
+
+    #[test]
+    fn explicit_transformation_algorithms_round_trip() -> Result<(), Box<dyn std::error::Error>> {
+        use crate::constants::transform_algorithm::{ENVELOPED_SIGNATURE, EXC_C14N};
+        let key = load_private_key(SP_PRIVKEY, None)?;
+        let transforms = [ENVELOPED_SIGNATURE.to_string(), EXC_C14N.to_string()];
+        let signed = construct_saml_signature(
+            AUTHN_REQUEST,
+            true,
+            &key,
+            SP_CERT,
+            RSA_SHA256,
+            &transforms,
+            None,
+        )?;
+        let (verified, _) = verify_signature(&signed, &[SP_CERT.to_string()])?;
+        assert!(verified, "explicit transforms should verify");
         Ok(())
     }
 

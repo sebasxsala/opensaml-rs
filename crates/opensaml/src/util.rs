@@ -130,6 +130,13 @@ pub fn is_non_empty_array<T>(items: &[T]) -> bool {
     !items.is_empty()
 }
 
+/// Verify that every value in `field` equals `meta_field` (samlify `verifyFields`).
+///
+/// Empty input is treated as a mismatch, matching samlify's `false` fall-through.
+pub fn verify_fields(field: &[String], meta_field: &str) -> bool {
+    !field.is_empty() && field.iter().all(|f| f == meta_field)
+}
+
 /// De-duplicate strings, preserving first-seen order (samlify `uniq`).
 pub fn uniq<I, S>(items: I) -> Vec<String>
 where
@@ -273,6 +280,14 @@ mod tests {
         assert_eq!(last::<i32>(&[]), None);
         assert!(is_non_empty_array(&[0]));
         assert!(!is_non_empty_array::<i32>(&[]));
+    }
+
+    #[test]
+    fn verify_fields_all_match_non_empty() {
+        assert!(verify_fields(&["a".to_string()], "a"));
+        assert!(verify_fields(&["a".to_string(), "a".to_string()], "a"));
+        assert!(!verify_fields(&["a".to_string(), "b".to_string()], "a"));
+        assert!(!verify_fields(&[], "a"));
     }
 
     #[test]

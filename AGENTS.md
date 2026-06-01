@@ -10,8 +10,9 @@ Standalone Rust workspace for SAML 2.0 Service Provider support.
   HTTP-Redirect, HTTP-POST-SimpleSign), entity/flow orchestration, time/status
   validation, and Single Logout. XML cryptography (XML-DSig sign/verify with
   anti-wrapping, XML-Enc encrypt/decrypt, detached message signatures) is
-  delegated to the `bergshamra` crate behind the optional `crypto-bergshamra`
-  feature (off by default). `#![forbid(unsafe_code)]`.
+  delegated to the `bergshamra` crate behind the `crypto-bergshamra`
+  feature (on by default; disable with `default-features = false`).
+  `#![forbid(unsafe_code)]`.
 - `samlify` — thin re-export (`pub use opensaml::*;`). No logic of its own. It
   is a Rust crate-name alias, unrelated to the npm `samlify` package. Forwards
   the `crypto-bergshamra` feature.

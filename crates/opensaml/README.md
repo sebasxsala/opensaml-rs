@@ -22,9 +22,11 @@ time/status/issuer validation. XML cryptography (XML-DSig, XML-Enc, C14N) is
 | XML-Enc (encrypted assertions) | ✅ | ➡️ `bergshamra` (feature) |
 | Detached redirect/SimpleSign signatures | ✅ | ➡️ `bergshamra` (feature) |
 
-Without the `crypto-bergshamra` feature, any operation requiring signing,
-verification, or encryption fails closed with `OpenSamlError::Unsupported`;
-unsigned message building, metadata, and extraction work feature-free.
+Crypto is **on by default**. Building with `default-features = false` drops the
+`bergshamra` dependency and the crypto-free protocol layer remains: any
+operation requiring signing, verification, or encryption then fails closed with
+`OpenSamlError::Unsupported`, while unsigned message building, metadata, and
+extraction work feature-free.
 
 The `samlify` crate in this workspace is just `pub use opensaml::*;` — a
 familiar crate name, unrelated to the npm package.
@@ -47,8 +49,8 @@ familiar crate name, unrelated to the npm package.
 
 ```toml
 [features]
-default = []
-crypto-bergshamra = ["dep:bergshamra"]  # XML crypto; off by default
+default = ["crypto-bergshamra"]
+crypto-bergshamra = ["dep:bergshamra"]  # XML crypto; on by default
 ```
 
 With `crypto-bergshamra`, verification uses bergshamra's `trusted_keys_only`

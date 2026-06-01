@@ -77,7 +77,10 @@ pub fn decrypt_assertion(xml: &str, enc_key: &Key) -> Result<(String, String), O
     let mut manager = KeysManager::new();
     manager.add_key(enc_key.clone());
     let ctx = EncContext::new(manager);
-    let assertion = decrypt(&ctx, encrypted_data_xml).map_err(crypto_err)?;
+    let decrypted = decrypt(&ctx, encrypted_data_xml).map_err(crypto_err)?;
+    // The decrypted element may carry an XML declaration; strip it so the
+    // assertion can be spliced back into the middle of the Response document.
+    let assertion = strip_xml_declaration(&decrypted).to_string();
 
     let response = format!(
         "{}{}{}",
@@ -86,6 +89,18 @@ pub fn decrypt_assertion(xml: &str, enc_key: &Key) -> Result<(String, String), O
         &xml[encrypted.end..]
     );
     Ok((response, assertion))
+}
+
+/// Drop a leading `<?xml ... ?>` declaration (and surrounding whitespace).
+fn strip_xml_declaration(xml: &str) -> &str {
+    let trimmed = xml.trim_start();
+    match trimmed.strip_prefix("<?xml") {
+        Some(rest) => match rest.find("?>") {
+            Some(end) => rest[end + 2..].trim_start(),
+            None => trimmed,
+        },
+        None => trimmed,
+    }
 }
 
 #[cfg(test)]

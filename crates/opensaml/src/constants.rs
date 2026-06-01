@@ -218,6 +218,14 @@ pub mod key_encryption_algorithm {
     pub const RSA_1_5: &str = "http://www.w3.org/2001/04/xmlenc#rsa-1_5";
 }
 
+/// XML-DSig transform / canonicalization algorithm URIs.
+pub mod transform_algorithm {
+    /// Enveloped-signature transform.
+    pub const ENVELOPED_SIGNATURE: &str = "http://www.w3.org/2000/09/xmldsig#enveloped-signature";
+    /// Exclusive XML canonicalization (also the canonicalization method).
+    pub const EXC_C14N: &str = "http://www.w3.org/2001/10/xml-exc-c14n#";
+}
+
 /// Query/form parameter names (`wording.urlParams`).
 pub mod url_params {
     /// `SAMLRequest` parameter.

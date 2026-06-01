@@ -13,6 +13,7 @@
 
 use super::keys::load_certificate;
 use crate::error::OpenSamlError;
+use crate::util::normalize_cert_string;
 use crate::xml::dom::{self, Node};
 use bergshamra::{verify, DsigContext, KeysManager, VerifyResult};
 
@@ -68,6 +69,18 @@ fn verified_content(root: &Node, xml: &str) -> Option<String> {
     None
 }
 
+/// First `<X509Certificate>` text found inside a `<Signature>` (the cert the
+/// sender embedded in the message), if any.
+fn inline_signature_cert(node: &Node, in_signature: bool) -> Option<String> {
+    let in_signature = in_signature || node.local_name == "Signature";
+    if in_signature && node.local_name == "X509Certificate" && !node.text.is_empty() {
+        return Some(node.text.clone());
+    }
+    node.children
+        .iter()
+        .find_map(|c| inline_signature_cert(c, in_signature))
+}
+
 /// Verify the XML-DSig signature(s) of `xml` against `metadata_certs`.
 ///
 /// Returns `(verified, signed_content)`:
@@ -94,31 +107,56 @@ pub fn verify_signature(
         return Ok((false, None));
     }
 
-    let mut manager = KeysManager::new();
+    // samlify ERROR_UNMATCH_CERTIFICATE_DECLARATION_IN_METADATA: if the message
+    // embeds a certificate, it must be one declared in metadata (rolling-cert
+    // safety). Verification itself still uses only the metadata certs.
+    if let Some(inline) = inline_signature_cert(root, false) {
+        let inline = normalize_cert_string(&inline);
+        if !metadata_certs.is_empty()
+            && !metadata_certs
+                .iter()
+                .any(|c| normalize_cert_string(c) == inline)
+        {
+            return Err(OpenSamlError::UnmatchCertificate);
+        }
+    }
+
+    // Try each metadata certificate individually (rolling-cert support): the
+    // signature verifies if any one of the declared keys matches.
     let mut have_key = false;
+    let mut tried_invalid = false;
+    let mut last_err: Option<OpenSamlError> = None;
     for cert in metadata_certs {
-        if let Ok(key) = load_certificate(cert) {
-            manager.add_key(key);
-            have_key = true;
+        let key = match load_certificate(cert) {
+            Ok(key) => key,
+            Err(_) => continue,
+        };
+        have_key = true;
+        let mut manager = KeysManager::new();
+        manager.add_key(key);
+        let ctx = DsigContext::new(manager)
+            .with_trusted_keys_only(true)
+            .with_strict_verification(true)
+            .with_insecure(true);
+        match verify(&ctx, xml) {
+            Ok(VerifyResult::Valid { references, .. }) => {
+                if references.is_empty() {
+                    return Err(OpenSamlError::Crypto("NO_SIGNATURE_REFERENCES".into()));
+                }
+                return Ok((true, verified_content(root, xml)));
+            }
+            Ok(VerifyResult::Invalid { .. }) => tried_invalid = true,
+            Err(e) => last_err = Some(OpenSamlError::Crypto(e.to_string())),
         }
     }
     if !have_key {
         return Err(OpenSamlError::Crypto("NO_SELECTED_CERTIFICATE".into()));
     }
-
-    let ctx = DsigContext::new(manager)
-        .with_trusted_keys_only(true)
-        .with_strict_verification(true)
-        .with_insecure(true);
-
-    match verify(&ctx, xml).map_err(|e| OpenSamlError::Crypto(e.to_string()))? {
-        VerifyResult::Valid { references, .. } => {
-            if references.is_empty() {
-                return Err(OpenSamlError::Crypto("NO_SIGNATURE_REFERENCES".into()));
-            }
-            Ok((true, verified_content(root, xml)))
-        }
-        VerifyResult::Invalid { .. } => Ok((false, None)),
+    // A clean "invalid" (key mismatch / tampered) is a non-error false; only
+    // surface a structural error when no certificate produced a verdict.
+    match last_err {
+        Some(err) if !tried_invalid => Err(err),
+        _ => Ok((false, None)),
     }
 }
 
@@ -161,11 +199,12 @@ mod tests {
 
     #[test]
     fn rejects_wrong_certificate() -> Result<(), Box<dyn std::error::Error>> {
-        // verifying the IdP-signed response against the SP cert must fail (wrong key)
-        let (verified, content) = verify_signature(RESPONSE_SIGNED, &[SP_CERT.to_string()])?;
-        assert!(!verified);
-        assert!(content.is_none());
-        Ok(())
+        // RESPONSE_SIGNED embeds the IdP cert; verifying against the SP cert trips
+        // the inline-vs-metadata mismatch guard (samlify UNMATCH_CERTIFICATE).
+        match verify_signature(RESPONSE_SIGNED, &[SP_CERT.to_string()]) {
+            Err(OpenSamlError::UnmatchCertificate) => Ok(()),
+            other => Err(format!("expected UnmatchCertificate, got {other:?}").into()),
+        }
     }
 
     #[test]

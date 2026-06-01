@@ -83,6 +83,21 @@ fn tagging(prefix: &str, content: &str) -> String {
     }
 }
 
+/// Placeholder key (without braces) for an attribute value tag: `attr<CamelCase>`
+/// (samlify `tagging('attr', valueTag)`). The runtime value fills `{<key>}`.
+pub fn attr_tag(value_tag: &str) -> String {
+    tagging("attr", value_tag)
+}
+
+/// IdP login `<Response>` template config (samlify `LoginResponseTemplate`).
+#[derive(Debug, Clone, Default)]
+pub struct LoginResponseTemplate {
+    /// Custom `<Response>` template; `None` uses [`LOGIN_RESPONSE_TEMPLATE`].
+    pub context: Option<String>,
+    /// Attributes rendered into the assertion's `<AttributeStatement>`.
+    pub attributes: Vec<LoginResponseAttribute>,
+}
+
 /// Build an `<AttributeStatement>` from `attributes` (samlify `attributeStatementBuilder`).
 ///
 /// Each attribute's value becomes a new `{attr<Tag>}` placeholder to be filled

@@ -15,7 +15,7 @@ name = "samlify"
 path = "src/lib.rs"
 
 [features]
-default = []
+default = ["crypto-bergshamra"]
 crypto-bergshamra = ["opensaml/crypto-bergshamra"]
 
 [dependencies]

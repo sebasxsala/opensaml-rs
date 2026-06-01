@@ -1,10 +1,15 @@
-//! `opensaml` — experimental SAML 2.0 **Service Provider** library.
+//! `opensaml` — SAML 2.0 **Service Provider** and **Identity Provider** library.
 //!
-//! HTTP bindings (POST form, Redirect query, DEFLATE, base64, escaping) are
-//! implemented in [`binding`]. Metadata, AuthnRequest, response parsing, and
-//! logout are documented stubs for now. XML cryptography is delegated to
-//! `bergshamra` behind the optional `crypto-bergshamra` feature. SP-first; see
-//! the crate README for the roadmap.
+//! Ported to parity with npm `samlify` v2.10.2: constants, XML field
+//! extraction ([`xml`]), message [`template`]s, [`metadata`] parse/generate,
+//! the three HTTP [`binding`]s (POST, Redirect, POST-SimpleSign), the
+//! [`sp`]/[`idp`] [`entity`] orchestration, inbound [`flow`] (decode →
+//! validate → verify/decrypt → extract), and Single [`logout`]. XML
+//! cryptography (XML-DSig sign/verify with anti-wrapping, XML-Enc, detached
+//! message signatures) is delegated to `bergshamra` behind the
+//! `crypto-bergshamra` feature (**on by default**; disable with
+//! `default-features = false` to build the crypto-free protocol layer, where
+//! crypto operations fail closed with [`OpenSamlError::Unsupported`]).
 
 #![forbid(unsafe_code)]
 
