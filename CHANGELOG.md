@@ -44,6 +44,7 @@ Versioning while the API is still pre-1.0.
   `Metadata::verify_signature`), and XSW + robustness test suites
   (`tests/{xsw,hardening,robustness}.rs`). Schema validation remains pluggable
   via `context::set_schema_validator` on top of the always-on DOCTYPE rejection.
+- Runnable end-to-end example: `cargo run -p opensaml --example sso`.
 
 ### Changed
 

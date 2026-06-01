@@ -57,3 +57,13 @@ With `crypto-bergshamra`, verification uses bergshamra's `trusted_keys_only`
 (accept only metadata-declared IdP keys) and `strict_verification` (reject
 out-of-position signed references) — plus an explicit XML Signature Wrapping
 guard in `crypto::verify`.
+
+## Example
+
+A full signed SSO round-trip (SP request → IdP response → SP validation):
+
+```sh
+cargo run -p opensaml --example sso
+```
+
+See [`examples/sso.rs`](examples/sso.rs).
