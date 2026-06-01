@@ -103,10 +103,36 @@ pub fn create_logout_request(
     relay_state: Option<&str>,
     want_signed: bool,
 ) -> Result<BindingContext, OpenSamlError> {
+    create_logout_request_with_id(
+        init_setting,
+        init_meta,
+        target_meta,
+        binding,
+        user,
+        relay_state,
+        want_signed,
+        None,
+    )
+}
+
+/// Like [`create_logout_request`] but uses `message_id` when provided.
+pub fn create_logout_request_with_id(
+    init_setting: &EntitySetting,
+    init_meta: &Metadata,
+    target_meta: &Metadata,
+    binding: Binding,
+    user: &User,
+    relay_state: Option<&str>,
+    want_signed: bool,
+    message_id: Option<&str>,
+) -> Result<BindingContext, OpenSamlError> {
     let destination = target_meta
         .get_single_logout_service(binding)
         .ok_or_else(|| OpenSamlError::MissingMetadata("SingleLogoutService".into()))?;
-    let id = generate_id();
+    let id = message_id
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .unwrap_or_else(generate_id);
     let name_id_format = init_setting
         .name_id_format
         .first()
@@ -175,10 +201,36 @@ pub fn create_logout_response(
     relay_state: Option<&str>,
     want_signed: bool,
 ) -> Result<BindingContext, OpenSamlError> {
+    create_logout_response_with_id(
+        init_setting,
+        init_meta,
+        target_meta,
+        binding,
+        in_response_to,
+        relay_state,
+        want_signed,
+        None,
+    )
+}
+
+/// Like [`create_logout_response`] but uses `message_id` when provided.
+pub fn create_logout_response_with_id(
+    init_setting: &EntitySetting,
+    init_meta: &Metadata,
+    target_meta: &Metadata,
+    binding: Binding,
+    in_response_to: Option<&str>,
+    relay_state: Option<&str>,
+    want_signed: bool,
+    message_id: Option<&str>,
+) -> Result<BindingContext, OpenSamlError> {
     let destination = target_meta
         .get_single_logout_service(binding)
         .ok_or_else(|| OpenSamlError::MissingMetadata("SingleLogoutService".into()))?;
-    let id = generate_id();
+    let id = message_id
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .unwrap_or_else(generate_id);
     let template = init_setting
         .logout_response_template
         .as_deref()
