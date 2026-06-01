@@ -56,7 +56,7 @@ fn unsigned_authn_request_redirect_round_trips() -> Result<(), Box<dyn std::erro
         },
         EntitySetting::default(),
     )?;
-    let ctx = sp.create_login_request(&idp, Binding::Redirect)?;
+    let ctx = sp.create_login_request(&idp, Binding::Redirect, None)?;
     let url = url::Url::parse(&ctx.context)?;
     let (_, value) = url
         .query_pairs()
@@ -111,11 +111,12 @@ mod signed {
         // IdP issues a signed Response; SP consumes it.
         let response = idp.create_login_response(
             &sp,
-            Some("_r1"),
             Binding::Post,
-            "alice@example.com",
-            None,
-            false,
+            &opensaml::entity::User::new("alice@example.com"),
+            &opensaml::idp::LoginResponseOptions {
+                in_response_to: Some("_r1"),
+                ..Default::default()
+            },
         )?;
         let request = HttpRequest::post(vec![("SAMLResponse".into(), response.context)]);
         let parsed = sp.parse_login_response(&idp, Binding::Post, &request)?;
@@ -132,7 +133,7 @@ mod signed {
             &sp.metadata,
             &idp.metadata,
             Binding::Post,
-            "alice@example.com",
+            &opensaml::entity::User::new("alice@example.com"),
             None,
             true, // want signed
         )?;
