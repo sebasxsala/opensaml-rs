@@ -1,7 +1,24 @@
 /target/
+/.lefthook-local.yml
 .DS_Store
+
+# Local scratch files and caches.
 .cache/
+.tmp/
 tmp/
+temp/
+
+# Environment secrets (never commit). Example templates stay tracked.
+.env
+.env.*
+!.env.example
+!**/.env.example
 
 # samlify upstream clone (local porting reference only; never commit)
 reference/upstream-samlify/*/repository/
+
+# Local agent / editor tooling (not part of the project)
+.agents/
+.cursor/
+.kiro/
+skills-lock.json
