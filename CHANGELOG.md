@@ -7,10 +7,24 @@ Versioning while the API is still pre-1.0.
 
 ## Unreleased
 
+## [0.1.1] - 2026-06-02
+
+### Added
+
+- `create_logout_request_with_id` / `create_logout_response_with_id` — optional
+  caller-provided `LogoutRequest` / `LogoutResponse` IDs.
+
 ### Changed
 
-- The published crate now ships its `tests/` and `examples/` (packaging only;
-  the consumed library is unchanged).
+- Root `README.md` rewrite: Rust-only positioning, opensaml vs samael
+  comparison, and sectioned quick-start examples; `opensaml` on crates.io now
+  uses that README.
+- The published crate ships its `tests/` and `examples/` (packaging only; the
+  consumed library is unchanged).
+
+### Fixed
+
+- XML-escape `Location` attribute values in generated SP/IdP metadata.
 
 ## [0.1.0] - 2026-06-01
 

@@ -6,7 +6,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/sebasxsala/opensaml-rs"
@@ -21,8 +21,8 @@ time = { version = "0.3", default-features = false, features = ["std", "parsing"
 url = "2"
 uuid = { version = "1", default-features = false, features = ["v4"] }
 bergshamra = "0.4"
-opensaml = { path = "crates/opensaml", version = "0.1.0" }
-samlify = { path = "crates/samlify", version = "0.1.0" }
+opensaml = { path = "crates/opensaml", version = "0.1.1" }
+samlify = { path = "crates/samlify", version = "0.1.1" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

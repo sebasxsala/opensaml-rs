@@ -182,7 +182,7 @@ Source: [`crates/opensaml/examples/sso.rs`](crates/opensaml/examples/sso.rs).
 | [`opensaml`](crates/opensaml) | Library: constants, XML, templates, metadata, bindings, `ServiceProvider` / `IdentityProvider`, flow, logout, validation, crypto (feature). |
 | [`samlify`](crates/samlify) | Thin re-export: `pub use opensaml::*;` — drop-in crate name only. |
 
-Crate-level API details, module map, and feature flags: [`crates/opensaml/README.md`](crates/opensaml/README.md).
+Crate-level API details: [docs.rs/opensaml](https://docs.rs/opensaml) and the `opensaml` crate rustdoc module map.
 
 ---
 
@@ -217,7 +217,7 @@ With `crypto-bergshamra` enabled (default):
 
 | | |
 |---|---|
-| **Version** | `0.1.0` (APIs may change until 1.0) |
+| **Version** | `0.1.1` (APIs may change until 1.0) |
 | **Reference port** | npm `samlify` v2.10.2 |
 | **Tests** | Upstream samlify suite ported 1:1 + XSW / audience / metadata-signature cases |
 | **Audit** | None yet |
