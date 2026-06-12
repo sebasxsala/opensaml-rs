@@ -1424,6 +1424,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c08d65885ee38876c4f86fa503fb49d7b507c2b62552df7c70b2fce627e06381"
 
 [[package]]
+name = "open-saml"
+version = "0.1.1"
+dependencies = [
+ "opensaml",
+]
+
+[[package]]
 name = "opensaml"
 version = "0.1.1"
 dependencies = [
@@ -1727,12 +1734,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "rust-saml"
+version = "0.1.1"
+dependencies = [
+ "opensaml",
+]
+
+[[package]]
 name = "rustc_version"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cfcb3a22ef46e85b45de6ee7e79d063319ebb6594faafcf1c225ea92ab6e9b92"
 dependencies = [
  "semver",
+]
+
+[[package]]
+name = "rustsaml"
+version = "0.1.1"
+dependencies = [
+ "opensaml",
 ]
 
 [[package]]

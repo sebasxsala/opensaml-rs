@@ -16,7 +16,7 @@ opensaml = "0.1"
 # opensaml = { version = "0.1", default-features = false }
 ```
 
-> The workspace crate [`samlify`](crates/samlify) is only `pub use opensaml::*;` — a familiar Rust name, **not** the npm package.
+> Alias crates ([`samlify`](crates/samlify), [`open-saml`](crates/open-saml), [`rust-saml`](crates/rust-saml), [`rustsaml`](crates/rustsaml)) are only `pub use opensaml::*;` — defensive name reservation and familiar alternate names. Prefer `opensaml` directly.
 
 ---
 

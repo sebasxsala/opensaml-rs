@@ -1,0 +1,25 @@
+[package]
+name = "rust-saml"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+description = "Official alias for opensaml (defensive crate name reservation)."
+keywords = ["saml", "sso", "authentication"]
+categories = ["authentication", "web-programming"]
+
+[lib]
+name = "rust_saml"
+path = "src/lib.rs"
+
+[features]
+default = ["crypto-bergshamra"]
+crypto-bergshamra = ["opensaml/crypto-bergshamra"]
+
+[dependencies]
+opensaml.workspace = true
+
+[lints]
+workspace = true

@@ -47,6 +47,9 @@ jobs:
       matrix:
         package:
           - opensaml
+          - open-saml
+          - rust-saml
+          - rustsaml
           - samlify
     steps:
       - uses: actions/checkout@v4
